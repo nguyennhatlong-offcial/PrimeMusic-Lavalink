@@ -1,3 +1,11 @@
+const https = require('https');
+https.get('https://discord.com/api/v10/gateway', (res) => {
+    console.log(`[ TEST IP ] Trạng thái kết nối Discord: ${res.statusCode}`);
+    if(res.statusCode === 403) console.log("=> XÁC NHẬN: IP này đã bị Discord chặn (403 Forbidden)!");
+}).on('error', (e) => {
+    console.error(`[ TEST IP ] Lỗi kết nối: ${e.message}`);
+});
+
 const { Client, GatewayIntentBits } = require("discord.js");
 const config = require("./config.js");
 const fs = require("fs");
@@ -10,9 +18,12 @@ const { getLang, getLangSync } = require('./utils/languageLoader.js');
 require('dotenv').config();
 
 const client = new Client({
-    intents: Object.keys(GatewayIntentBits).map((a) => {
-        return GatewayIntentBits[a];
-    }),
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent, // Quyền đọc lệnh
+        GatewayIntentBits.GuildVoiceStates // Quyền vào kênh nhạc
+    ],
 });
 
 client.config = config;
@@ -103,6 +114,114 @@ client.on("clientReady", () => {
 client.config = config;
 
 fs.readdir("./events", (_err, files) => {
+  files.forEach((file) => {
+    if (!file.endsWith(".js")) return;
+    const event = require(`./events/${file}`);
+    let eventName = file.split(".")[0]; 
+    client.on(eventName, event.bind(null, client));
+    delete require.cache[require.resolve(`./events/${file}`)];
+  });
+});
+
+
+
+client.commands = new Map();
+client.commandsArray = [];
+
+
+const loadCommands = () => {
+  const loadCommandsFromDir = (dir, category = '') => {
+    const items = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const item of items) {
+      const fullPath = path.join(dir, item.name);
+      
+      if (item.isDirectory()) {
+    
+        loadCommandsFromDir(fullPath, item.name);
+      } else if (item.isFile() && item.name.endsWith('.js')) {
+        try {
+       
+          const absolutePath = path.resolve(fullPath);
+          const command = require(absolutePath);
+          
+          if (command.data && command.run) {
+            client.commands.set(command.data.name, command);
+            client.commandsArray.push(command.data.toJSON());
+            const categoryInfo = category ? ` [${category}]` : '';
+            //console.log(`${colors.cyan}[ COMMANDS ]${colors.reset} ${colors.green}Loaded: ${colors.yellow}${command.data.name}${categoryInfo}${colors.reset}`);
+          } else {
+            const lang = getLangSync();
+            console.log(`${colors.cyan}[ COMMANDS ]${colors.reset} ${colors.red}${lang.console?.bot?.commandLoadFailed?.replace('{name}', item.name) || `Failed to load: ${item.name} - Missing data or run property`}${colors.reset}`);
+      }
+        } catch (error) {
+          const lang = getLangSync();
+          console.error(`${colors.cyan}[ COMMANDS ]${colors.reset} ${colors.red}${lang.console?.bot?.commandLoadError?.replace('{name}', item.name).replace('{message}', error.message) || `Error loading ${item.name}: ${error.message}`}${colors.reset}`);
+    }
+      }
+    }
+  };
+  
+
+  const commandsDir = path.resolve(__dirname, config.commandsDir);
+  loadCommandsFromDir(commandsDir);
+  const lang = getLangSync();
+  console.log(`${colors.cyan}[ COMMANDS ]${colors.reset} ${colors.green}${lang.console?.bot?.commandsLoaded?.replace('{count}', client.commands.size) || `Total Commands Loaded: ${client.commands.size}`}${colors.reset}`);
+};
+
+loadCommands();
+
+
+client.on("raw", (d) => {
+    const { GatewayDispatchEvents } = require("discord.js");
+    if (![GatewayDispatchEvents.VoiceStateUpdate, GatewayDispatchEvents.VoiceServerUpdate].includes(d.t)) return;
+    if (config.voiceDebug === true) {
+        if (d.t === GatewayDispatchEvents.VoiceStateUpdate) {
+            const isBot = d.d?.user_id === client.user?.id;
+            console.log(`[ VOICE DEBUG ] raw=${d.t} guild=${d.d?.guild_id || 'null'} botUser=${isBot} channel=${d.d?.channel_id || 'null'} sessionId=${d.d?.session_id ? 'yes' : 'no'}`);
+        } else {
+            console.log(`[ VOICE DEBUG ] raw=${d.t} guild=${d.d?.guild_id || 'null'} endpoint=${d.d?.endpoint ? 'yes' : 'no'} token=${d.d?.token ? 'yes' : 'no'}`);
+        }
+    }
+    client.riffy.updateVoiceState(d);
+});
+
+client.login(config.TOKEN || process.env.TOKEN).catch((e) => {
+  const lang = getLangSync();
+  console.log('\n' + '─'.repeat(40));
+  console.log(`${colors.magenta}${colors.bright}${lang.console?.bot?.tokenVerification || '🔐 TOKEN VERIFICATION'}${colors.reset}`);
+  console.log('─'.repeat(40));
+  console.log(`${colors.cyan}[ TOKEN ]${colors.reset} ${colors.red}${lang.console?.bot?.tokenAuthFailed || 'Authentication Failed ❌'}${colors.reset}`);
+  console.log(`${colors.gray}${lang.console?.bot?.tokenError || 'Error: Turn On Intents or Reset New Token'}${colors.reset}`);
+});
+connectToDatabase().then(() => {
+  const lang = getLangSync();
+  console.log(`${colors.cyan}[ DATABASE ]${colors.reset} ${colors.green}${lang.console?.bot?.databaseOnline || 'MongoDB Online ✅'}${colors.reset}`);
+}).catch((err) => {
+  const lang = getLangSync();
+  console.log('\n' + '─'.repeat(40));
+  console.log(`${colors.magenta}${colors.bright}${lang.console?.bot?.databaseStatus || '🕸️  DATABASE STATUS'}${colors.reset}`);
+  console.log('─'.repeat(40));
+  console.log(`${colors.cyan}[ DATABASE ]${colors.reset} ${colors.red}${lang.console?.bot?.databaseFailed || 'Connection Failed ❌'}${colors.reset}`);
+  console.log(`${colors.gray}${lang.console?.bot?.databaseError?.replace('{message}', err.message) || `Error: ${err.message}`}${colors.reset}`);
+});
+const express = require("express");
+const app = express();
+const port = 7860;
+app.get('/', (req, res) => {
+    const imagePath = path.join(__dirname, 'index.html');
+    res.sendFile(imagePath);
+});
+
+app.listen(port, () => {
+    console.log('\n' + '─'.repeat(40));
+    console.log(`${colors.magenta}${colors.bright}🌐 SERVER STATUS${colors.reset}`);
+    console.log('─'.repeat(40));
+    console.log(`${colors.cyan}[ SERVER ]${colors.reset} ${colors.green}Online ✅${colors.reset}`);
+    console.log(`${colors.cyan}[ PORT ]${colors.reset} ${colors.yellow}http://localhost:${port}${colors.reset}`);
+    console.log(`${colors.cyan}[ TIME ]${colors.reset} ${colors.gray}${new Date().toISOString().replace('T', ' ').split('.')[0]}${colors.reset}`);
+    console.log(`${colors.cyan}[ USER ]${colors.reset} ${colors.yellow}GlaceYT${colors.reset}`);
+});
   files.forEach((file) => {
     if (!file.endsWith(".js")) return;
     const event = require(`./events/${file}`);
